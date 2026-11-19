@@ -48,7 +48,9 @@ async function serve(a: Args, extra: { hint?: string; warning?: string | null } 
   const cwd = resolve(a.flags.get("cwd")?.[0] ?? process.cwd());
   const stateDir = resolve(a.flags.get("state-dir")?.[0] ?? defaultStateDir());
   const sessionArg = a.flags.get("session")?.[0];
-  const session = sessionArg ? resolve(sessionArg) : null;
+  // --remote <ssh target>: the agent runs on that machine (Codex: its app-server daemon); cwd and --session are its paths.
+  const remote = a.flags.get("remote")?.[0] || undefined;
+  const session = sessionArg ? (remote ? sessionArg : resolve(sessionArg)) : null;
   const previous = readRegistry(stateDir, chatId);
   const provider = a.flags.get("provider")?.[0] ?? previous?.provider ?? DEFAULT_PROVIDER;
   if (!providerNames().includes(provider)) die(`unknown --provider ${provider} (known: ${providerNames().join(", ")})`);
@@ -72,8 +74,6 @@ async function serve(a: Args, extra: { hint?: string; warning?: string | null } 
       appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`);
     } catch {}
   };
-  // --remote <ssh target>: the agent runs on that machine (Codex: its app-server daemon); cwd and --session are its paths.
-  const remote = a.flags.get("remote")?.[0] || undefined;
   if (remote && provider !== "codex") die("--remote works with --provider codex only");
   const adapter = createAdapter(provider, { cwd, args: a.after, log, ...(agentCommand ? { command: agentCommand } : {}), ...(remote ? { remote } : {}) });
   log(`serve chat=${chatId} cwd=${cwd} remote=${remote ?? "-"} session=${session ?? "-"} provider=${provider} cmd=${agentCommand ?? "(default)"} pid=${process.pid}`);
