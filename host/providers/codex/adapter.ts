@@ -255,9 +255,15 @@ export class CodexAdapter implements ProviderAdapter {
     this.host = host;
     this.resetRun();
     this.asks.clear();
-    const args = ["-c", "notify=[]", ...this.opts.args, "app-server"];
-    host.log(`spawn ${this.opts.command} ${args.join(" ")}`);
-    const proc = new CodexProcess({ command: this.opts.command, args, cwd: this.opts.cwd, env: agentEnv() });
+    const remote = this.opts.remote;
+    // Remote: the machine's own daemon (it outlives this host, so a turn finishes while the Mac sleeps).
+    // Its `codex` is the one on that machine's PATH; --codex and the extra arguments are this machine's.
+    const command = remote ? "ssh" : this.opts.command;
+    const args = remote
+      ? ["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", remote, "codex", "app-server", "proxy"]
+      : ["-c", "notify=[]", ...this.opts.args, "app-server"];
+    host.log(`spawn ${command} ${args.join(" ")}`);
+    const proc = new CodexProcess({ command, args, cwd: remote ? homedir() : this.opts.cwd, env: agentEnv(), ws: Boolean(remote) });
     this.proc = proc;
     this.flushMcp();
     this.mcp.states.clear();
@@ -309,7 +315,7 @@ export class CodexAdapter implements ProviderAdapter {
     if (session && !id) this.emit({ type: "notice", level: "warning", source: "host", text: `"${session}" is not a Codex session; starting a new one.` });
     if (id) {
       const params: Rec = { threadId: id, excludeTurns: true, cwd: this.opts.cwd, config: THREAD_CONFIG };
-      if (session && session.endsWith(".jsonl") && existsSync(session)) params.path = session;
+      if (session && session.endsWith(".jsonl") && !this.opts.remote && existsSync(session)) params.path = session;
       try {
         const r = await this.resumeThread(params);
         this.applyThread(r, true);
@@ -966,7 +972,10 @@ export class CodexAdapter implements ProviderAdapter {
     const input: Rec[] = [];
     if (body) input.push({ type: "text", text: body, text_elements: [] });
     input.push(...extra);
-    if (images.length) {
+    if (images.length && this.opts.remote) {
+      // The daemon can't read this machine's files: images go inline.
+      for (const img of images) input.push({ type: "image", url: `data:${img.mimeType};base64,${img.data}` });
+    } else if (images.length) {
       const dir = join(tmpdir(), "herdr-chat-codex-images");
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       for (const img of images) {
@@ -1127,7 +1136,8 @@ export class CodexAdapter implements ProviderAdapter {
     const out: NormalizedEvent[] = [];
     if (more) out.push({ type: "notice", level: "info", source: "host", text: `Showing the last ${HISTORY_TURNS} turns of this session.`, ts: (num(turns[0]?.startedAt) ?? 0) * 1000 });
     const loaded = new Set<string>();
-    const plans = this.threadFile ? await rolloutPlans(this.threadFile, (id) => this.rolloutPath(id)) : new Map<string, RolloutPlan[]>();
+    // A remote thread's rollout is on that machine; its plans aren't read back.
+    const plans = this.threadFile && !this.opts.remote ? await rolloutPlans(this.threadFile, (id) => this.rolloutPath(id)) : new Map<string, RolloutPlan[]>();
     const feed = async (threadId: string, turn: Rec): Promise<void> => {
       const t0 = (num(turn.startedAt) ?? Date.now() / 1000) * 1000;
       m.ts = t0;
@@ -1265,7 +1275,9 @@ export class CodexAdapter implements ProviderAdapter {
 
   tuiCommand(session: string): string[] {
     // --no-daemon: the TUI must not load the thread into the shared daemon, or our resume fails for ~60 s after it exits.
-    return [this.opts.command, ...this.opts.args, "resume", "--no-daemon", threadIdOf(session) ?? this.thread ?? session];
+    const id = threadIdOf(session) ?? this.thread ?? session;
+    if (this.opts.remote) return ["ssh", "-t", this.opts.remote, `cd ${JSON.stringify(this.opts.cwd)} && codex resume --no-daemon ${id}`];
+    return [this.opts.command, ...this.opts.args, "resume", "--no-daemon", id];
   }
 
   // ---------------------------------------------------------------- settings
@@ -1352,7 +1364,7 @@ export class CodexAdapter implements ProviderAdapter {
     if (!id) throw new Error(`"${path}" is not a Codex session`);
     this.resetRun();
     const params: Rec = { threadId: id, excludeTurns: true, cwd: this.opts.cwd, config: THREAD_CONFIG };
-    if (path.endsWith(".jsonl") && existsSync(path)) params.path = path;
+    if (path.endsWith(".jsonl") && !this.opts.remote && existsSync(path)) params.path = path;
     try {
       this.applyThread(await this.resumeThread(params), true);
     } catch (e) {

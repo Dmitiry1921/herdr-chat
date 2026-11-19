@@ -387,4 +387,10 @@ export type AdapterOptions = {
   /** Extra arguments for the agent (after `--` on the host's command line). */
   args: string[];
   log: (msg: string) => void;
+  /**
+   * SSH target of the machine the agent runs on (a Herdr machine's host). Codex: talk to the
+   * `codex app-server` daemon already running there over `ssh <remote> codex app-server proxy`;
+   * `cwd` and session paths are that machine's. A turn keeps running there when this host goes away.
+   */
+  remote?: string;
 };

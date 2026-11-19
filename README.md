@@ -137,6 +137,7 @@ another URL with GitHub's release JSON.
 ## Limitations
 
 - **macOS only.** Spaces on other machines still open the agent's TUI.
+  A chat can drive Codex on another machine with the `remote` prop (an SSH target, e.g. the Herdr machine's host): the host stays on this Mac and talks to the `codex app-server` daemon there over `ssh <target> codex app-server proxy`, so a turn keeps running when the Mac sleeps. Plans of a resumed remote thread aren't read back (its rollout is on that machine).
 - **Run the install again after a Herdr update.** The agents list and the
   right-click menu are copies of Herdr's, made at install time.
 - **Continue as chat on Codex guesses the session** when Codex runs on its

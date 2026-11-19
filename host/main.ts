@@ -72,8 +72,11 @@ async function serve(a: Args, extra: { hint?: string; warning?: string | null } 
       appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`);
     } catch {}
   };
-  const adapter = createAdapter(provider, { cwd, args: a.after, log, ...(agentCommand ? { command: agentCommand } : {}) });
-  log(`serve chat=${chatId} cwd=${cwd} session=${session ?? "-"} provider=${provider} cmd=${agentCommand ?? "(default)"} pid=${process.pid}`);
+  // --remote <ssh target>: the agent runs on that machine (Codex: its app-server daemon); cwd and --session are its paths.
+  const remote = a.flags.get("remote")?.[0] || undefined;
+  if (remote && provider !== "codex") die("--remote works with --provider codex only");
+  const adapter = createAdapter(provider, { cwd, args: a.after, log, ...(agentCommand ? { command: agentCommand } : {}), ...(remote ? { remote } : {}) });
+  log(`serve chat=${chatId} cwd=${cwd} remote=${remote ?? "-"} session=${session ?? "-"} provider=${provider} cmd=${agentCommand ?? "(default)"} pid=${process.pid}`);
 
   // Images saved by an earlier run of this chat belong to items that no longer exist.
   rmSync(join(stateDir, "images", chatId), { recursive: true, force: true });

@@ -1,4 +1,4 @@
-import { appHome, hc, readTextFile, terminals } from "herdr";
+import { appHome, hc, home, readTextFile, terminals } from "herdr";
 import { openLink } from "./transport.js";
 import { DEFAULT_PROVIDER, MOD, message } from "./util.js";
 
@@ -236,11 +236,13 @@ export class Connection {
       // labels yet: the app would adopt it as a visible pane. The chat adds
       // its pane, hidden, to the layout document, then labels it (main.js
       // keepHostHidden). --keep: the core keeps it, as adoption would.
-      "run", "--bg", "--json", "--keep", "--no-parent", "--cwd", this.o.cwd,
+      // A remote chat's folder is that machine's: the host itself starts in this machine's home.
+      "run", "--bg", "--json", "--keep", "--no-parent", "--cwd", this.o.remote ? home() : this.o.cwd,
       "--label", `herdr-chat.chat=${this.o.chat}`, "--label", "herdr-chat.role=host",
       "--", "/usr/bin/env", ...Object.entries(env).map(([k, v]) => `${k}=${v}`),
       host, "serve", "--chat", this.o.chat, "--cwd", this.o.cwd, "--state-dir", stateDir(), "--app-home", appHome(), "--provider", provider,
       ...(session ? ["--session", session] : []),
+      ...(this.o.remote ? ["--remote", this.o.remote] : []),
       // A Pi TUI this chat takes over: the host waits for its pid, then uses its model and
       // thinking (only while that pid lives: a later restart of the chat ignores them).
       ...(session && this.o.handOver?.pid ? ["--after-pid", String(this.o.handOver.pid),

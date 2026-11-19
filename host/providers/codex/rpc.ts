@@ -2,6 +2,7 @@
 // Spawned in its own process group; correlates our requests, routes the
 // server's requests and notifications, keeps a stderr tail, tears down checked.
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import { LineFramer } from "../../framing.ts";
 import type { Oversized } from "../../framing.ts";
@@ -31,7 +32,74 @@ export type ExitInfo = { code: number | null; signal: NodeJS.Signals | null; std
 
 type Pending = { resolve: (data: any) => void; reject: (e: Error) => void; timer?: NodeJS.Timeout; method: string };
 
-export type SpawnOptions = { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv };
+/**
+ * `ws`: the child's stdio is a raw byte pipe to a WebSocket server (`ssh <host> codex app-server proxy`
+ * to a running `codex app-server --listen unix://` daemon): one JSON-RPC message per text frame
+ * instead of one per line.
+ */
+export type SpawnOptions = { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv; ws?: boolean };
+
+/** Client side of RFC 6455 over a byte pipe: masked text frames out, text frames in (fragments joined), ping answered. */
+export class WsFramer {
+  private buf: Buffer = Buffer.alloc(0);
+  private open = false;
+  private parts: Buffer[] = [];
+  onMessage: (text: string) => void = () => {};
+  onControl: (frame: Buffer) => void = () => {};
+  onClose: () => void = () => {};
+  /** The upgrade was accepted: frames may go out now (the daemon's proxy loses any sent before its 101). */
+  onOpen: () => void = () => {};
+
+  static handshake(): string {
+    return `GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\n\r\n`;
+  }
+
+  static frame(payload: Buffer, opcode = 0x1): Buffer {
+    const mask = randomBytes(4);
+    const n = payload.length;
+    const head = n < 126 ? Buffer.from([0x80 | opcode, 0x80 | n]) : Buffer.alloc(n < 65536 ? 4 : 10);
+    if (n >= 126) {
+      head[0] = 0x80 | opcode;
+      if (n < 65536) { head[1] = 0x80 | 126; head.writeUInt16BE(n, 2); } else { head[1] = 0x80 | 127; head.writeBigUInt64BE(BigInt(n), 2); }
+    }
+    const body = Buffer.allocUnsafe(n);
+    for (let i = 0; i < n; i++) body[i] = payload[i]! ^ mask[i % 4]!;
+    return Buffer.concat([head, mask, body]);
+  }
+
+  push(d: Buffer): void {
+    this.buf = this.buf.length ? Buffer.concat([this.buf, d]) : d;
+    if (!this.open) {
+      const end = this.buf.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      if (!/^HTTP\/1\.1 101/.test(this.buf.subarray(0, end).toString("latin1"))) {
+        this.onClose();
+        return;
+      }
+      this.open = true;
+      this.buf = this.buf.subarray(end + 4);
+      this.onOpen();
+    }
+    for (;;) {
+      if (this.buf.length < 2) return;
+      const fin = (this.buf[0]! & 0x80) !== 0, op = this.buf[0]! & 0x0f, masked = (this.buf[1]! & 0x80) !== 0;
+      let len = this.buf[1]! & 0x7f, off = 2;
+      if (len === 126) { if (this.buf.length < 4) return; len = this.buf.readUInt16BE(2); off = 4; }
+      else if (len === 127) { if (this.buf.length < 10) return; len = Number(this.buf.readBigUInt64BE(2)); off = 10; }
+      const keyAt = off;
+      if (masked) off += 4;
+      if (this.buf.length < off + len) return;
+      let body = this.buf.subarray(off, off + len);
+      if (masked) { const k = this.buf.subarray(keyAt, keyAt + 4); body = Buffer.from(body.map((b, i) => b ^ k[i % 4]!)); }
+      this.buf = this.buf.subarray(off + len);
+      if (op === 0x8) { this.onClose(); return; }
+      if (op === 0x9) { this.onControl(WsFramer.frame(Buffer.from(body), 0xa)); continue; }
+      if (op === 0xa) continue;
+      this.parts.push(Buffer.from(body));
+      if (fin) { const text = Buffer.concat(this.parts).toString("utf8"); this.parts = []; this.onMessage(text); }
+    }
+  }
+}
 
 export class CodexProcess {
   child: ChildProcess;
@@ -39,6 +107,9 @@ export class CodexProcess {
   exited = false;
   exitInfo: ExitInfo | null = null;
   private nextId = 1;
+  private ws = false;
+  /** Frames written before the WebSocket upgrade was accepted; null once open. */
+  private wsQueue: Buffer[] | null = [];
   private pending = new Map<RequestId, Pending>();
   private stderrTail = "";
   private stderrLine = "";
@@ -61,7 +132,19 @@ export class CodexProcess {
     const framer = new LineFramer(CODEX_MAX_LINE);
     framer.onLine = (line) => this.route(line);
     framer.onOversized = (o) => this.oversized(o);
-    this.child.stdout!.on("data", (d: Buffer) => framer.push(d));
+    if (opts.ws) {
+      this.ws = true;
+      const wsf = new WsFramer();
+      wsf.onMessage = (text) => this.route(text);
+      wsf.onControl = (f) => { if (!this.child.stdin?.destroyed) this.child.stdin!.write(f); };
+      wsf.onOpen = () => {
+        for (const f of this.wsQueue!.splice(0)) this.child.stdin!.write(f);
+        this.wsQueue = null;
+      };
+      wsf.onClose = () => { try { this.child.stdin?.end(); } catch {} this.signal("SIGTERM"); };
+      this.child.stdin!.write(WsFramer.handshake());
+      this.child.stdout!.on("data", (d: Buffer) => wsf.push(d));
+    } else this.child.stdout!.on("data", (d: Buffer) => framer.push(d));
     let stdoutEnded = false;
     let exitArgs: [number | null, NodeJS.Signals | null] | null = null;
     let spawnError: string | undefined;
@@ -157,7 +240,10 @@ export class CodexProcess {
 
   write(msg: Rec): boolean {
     if (this.exited || !this.child.stdin || this.child.stdin.destroyed) return false;
-    this.child.stdin.write(JSON.stringify(msg) + "\n");
+    const text = JSON.stringify(msg);
+    if (!this.ws) this.child.stdin.write(text + "\n");
+    else if (this.wsQueue) this.wsQueue.push(WsFramer.frame(Buffer.from(text, "utf8")));
+    else this.child.stdin.write(WsFramer.frame(Buffer.from(text, "utf8")));
     return true;
   }
 

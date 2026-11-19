@@ -144,6 +144,8 @@ export default class HerdrChat extends View {
       session: p.session ?? null,
       provider: this.provider,
       hostEnv: p.hostEnv ?? null,
+      // A chat whose agent runs on another machine (an SSH target; Codex only): the host stays here.
+      remote: p.remote ?? null,
       // Continue as chat on a top-level Pi TUI (new-chat's continueInPlace): its pid, model and thinking.
       handOver: p.afterPid ? { pid: p.afterPid, model: p.model ?? null, thinking: p.thinking ?? null } : null,
       attachOnly: Boolean(this.sub),
