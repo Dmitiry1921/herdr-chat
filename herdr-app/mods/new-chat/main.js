@@ -32,6 +32,7 @@ const CHOICES = [
   { id: "pi", label: "Pi", icon: "pi", tint: true, letter: "p" },
   { id: "claude", label: "Claude Code", icon: "claude", letter: "c" },
   { id: "codex", label: "Codex", icon: "codex", letter: "x" },
+  { id: "deepseek", label: "DeepSeek", icon: "deepseek", letter: "d" },
 ];
 const PREFS = () => `${appHome()}/data/herdr-chat/launcher.json`;
 

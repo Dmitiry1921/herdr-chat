@@ -18,7 +18,8 @@ host core (provider-neutral)
    │  ProviderAdapter interface (host/providers/types.ts)
    ├── host/providers/pi/       pi --mode rpc           (today's pi-rpc.ts + the Pi half of chat.ts/timeline.ts)
    ├── host/providers/claude/   Claude Code, structured mode (see research)
-   └── host/providers/codex/    Codex app-server JSON-RPC (see research)
+   ├── host/providers/codex/    Codex app-server JSON-RPC (see research)
+   └── host/providers/deepseek/ DeepSeek Harness, `dsh acp` (Agent Client Protocol)
 ```
 
 An **adapter** owns:
@@ -82,6 +83,19 @@ What else differs, from each agent's own mechanism, not from the chat:
 | The chat follows a session switch made in `/tui` | yes (the lock extension's hand-off file) | no | no |
 | Continue as chat: the TUI's session (`tui.ts`) | the lock extension's label | its `~/.claude/sessions/<pid>.json` | the rollout it has open, else the newest in its folder |
 | The plan (`state.plan`; a subagent's is a `plan` card) | none | TodoWrite: the chat's plan from the call, a subagent's as its card. TaskCreate/TaskUpdate/TaskList: the chat's plan, subagents' changes included, from the results (`plans.ts`), in task id order; a resume carries the transcript's list on, a fork starts a new one | `turn/plan/updated`, each turn's update replaces the plan; a subagent thread's is its card. Resume reads the rollout's `update_plan` calls (`rollout.ts`; code mode's `exec` JS too), and a fork's source's up to the fork |
+
+### DeepSeek Harness (ACP)
+
+`dsh acp` speaks the Agent Client Protocol: JSON-RPC 2.0 on stdio, `session/new`, `session/prompt`
+(one run; its `session/update`s stream thoughts, text, tool calls, usage), `session/cancel`,
+`session/request_permission` (an approval card), `session/resume` (replays nothing) and
+`session/set_config_option` (`model`, `reasoning_effort`). What ACP doesn't give is read from dsh's
+own session files (`~/.dsh/sessions/<folder>/<id>/session.v4.jsonl.zstd`, `$DSH_HOME`): the history
+of a resumed session and /resume's list (`sessions: files`). A new session starts on dsh's default
+model; the adapter takes the model the newest session used instead, and when a prompt fails with
+"no API key for provider route", switches to the first model of another provider and sends it again.
+No steering (a message mid-run waits for the next prompt), no permission modes, compaction, rename,
+fork, images or TUI (`tuiCommand` and `tuiSession` refuse), and no `--remote`.
 
 ## Process (one host process per chat)
 

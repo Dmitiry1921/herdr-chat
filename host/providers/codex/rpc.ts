@@ -37,7 +37,13 @@ type Pending = { resolve: (data: any) => void; reject: (e: Error) => void; timer
  * to a running `codex app-server --listen unix://` daemon): one JSON-RPC message per text frame
  * instead of one per line.
  */
-export type SpawnOptions = { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv; ws?: boolean };
+export type SpawnOptions = {
+  command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv; ws?: boolean;
+  /** The agent's name in errors (default "Codex"). */
+  label?: string;
+  /** Put `"jsonrpc": "2.0"` on every message (ACP agents require it; Codex omits it). */
+  jsonrpc?: boolean;
+};
 
 /** Client side of RFC 6455 over a byte pipe: masked text frames out, text frames in (fragments joined), ping answered. */
 export class WsFramer {
@@ -108,6 +114,8 @@ export class CodexProcess {
   exitInfo: ExitInfo | null = null;
   private nextId = 1;
   private ws = false;
+  private label: string;
+  private jsonrpc: boolean;
   /** Frames written before the WebSocket upgrade was accepted; null once open. */
   private wsQueue: Buffer[] | null = [];
   private pending = new Map<RequestId, Pending>();
@@ -129,6 +137,8 @@ export class CodexProcess {
       detached: process.platform !== "win32",
     });
     this.pid = this.child.pid;
+    this.label = opts.label ?? "Codex";
+    this.jsonrpc = Boolean(opts.jsonrpc);
     const framer = new LineFramer(CODEX_MAX_LINE);
     framer.onLine = (line) => this.route(line);
     framer.onOversized = (o) => this.oversized(o);
@@ -189,7 +199,7 @@ export class CodexProcess {
     for (const [id, p] of this.pending) {
       this.pending.delete(id);
       if (p.timer) clearTimeout(p.timer);
-      p.reject(new CodexRpcError(p.method, "Codex exited", null, true));
+      p.reject(new CodexRpcError(p.method, `${this.label} exited`, null, true));
     }
     this.onExit(info);
     for (const w of this.exitWaiters.splice(0)) w(info);
@@ -240,7 +250,7 @@ export class CodexProcess {
 
   write(msg: Rec): boolean {
     if (this.exited || !this.child.stdin || this.child.stdin.destroyed) return false;
-    const text = JSON.stringify(msg);
+    const text = JSON.stringify(this.jsonrpc ? { jsonrpc: "2.0", ...msg } : msg);
     if (!this.ws) this.child.stdin.write(text + "\n");
     else if (this.wsQueue) this.wsQueue.push(WsFramer.frame(Buffer.from(text, "utf8")));
     else this.child.stdin.write(WsFramer.frame(Buffer.from(text, "utf8")));
@@ -252,21 +262,21 @@ export class CodexProcess {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       if (this.exited) {
-        reject(new CodexRpcError(method, "Codex is not running"));
+        reject(new CodexRpcError(method, `${this.label} is not running`));
         return;
       }
       const p: Pending = { resolve, reject, method };
       if (timeoutMs > 0) {
         p.timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(new CodexRpcError(method, `Codex did not answer ${method} within ${Math.round(timeoutMs / 1000)} s`));
+          reject(new CodexRpcError(method, `${this.label} did not answer ${method} within ${Math.round(timeoutMs / 1000)} s`));
         }, timeoutMs);
       }
       this.pending.set(id, p);
       if (!this.write({ method, id, params })) {
         this.pending.delete(id);
         if (p.timer) clearTimeout(p.timer);
-        reject(new CodexRpcError(method, "Codex is not running"));
+        reject(new CodexRpcError(method, `${this.label} is not running`));
       }
     });
   }
