@@ -47,6 +47,19 @@ function num(v: unknown): number | undefined {
 }
 
 /** A user message's text and image inputs (`UserInput[]`). */
+/**
+ * The Codex app sends a message with attachments wrapped: "# Files mentioned by the user:", a "## name: path" section per
+ * file, then "## My request:" (or "## My request for Codex:") and the typed text. The bubble shows the typed text; images
+ * come as their own parts, other files stay as their paths.
+ */
+export function unwrapAppPrompt(text: string): string {
+  const m = /^\s*# Files mentioned by the user:\s*\n([\s\S]*?)\n## My request(?: for Codex)?:[ \t]*\n([\s\S]*)$/.exec(text);
+  if (!m) return text;
+  const files = [...m[1]!.matchAll(/^## [^\n]*?: (\/[^\n]+)\n((?:(?!## )[^\n]*\n?)*)/gm)]
+    .filter((f) => !/Image attachment: true/.test(f[2] ?? "")).map((f) => f[1]!.trim());
+  return [...files, m[2]!.trim()].filter(Boolean).join("\n");
+}
+
 export function userContent(content: unknown, readImage?: (p: string) => ImageBlock | null): { text: string; images: number; imageBlocks: ImageBlock[]; skill?: SkillRef } {
   const parts: Rec[] = Array.isArray(content) ? content : [];
   const texts: string[] = [];
@@ -67,7 +80,7 @@ export function userContent(content: unknown, readImage?: (p: string) => ImageBl
       if (m) imageBlocks.push({ mimeType: m[1]!, data: m[2]! });
     }
   }
-  let text = texts.join("\n");
+  let text = unwrapAppPrompt(texts.join("\n"));
   // The text names the skill as `$name` (buildInput, like Codex's TUI): the pill shows it.
   if (skill) {
     const lead = `$${skill.name}`;
