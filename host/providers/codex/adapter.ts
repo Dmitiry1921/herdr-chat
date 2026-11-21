@@ -296,6 +296,13 @@ export class CodexAdapter implements ProviderAdapter {
       host.emit({ type: "notice", level: "warning", source: "host", text: `Codex ${version} is older than ${MIN_VERSION}; the chat needs Codex ${MIN_VERSION} or newer.` });
     }
     proc.notify("initialized");
+    // Hooks of the user's own plugins are approved before the thread starts: an unapproved one fails on every
+    // SessionStart and prompt, and the chat has no Codex approval screen (user, 21.11.2026: «чтобы они были сразу приняты»).
+    // Remote: that machine's hooks stay its own.
+    if (!remote) {
+      const n = await this.approveHooks().catch((e) => (host.log(`approve hooks: ${errText(e)}`), 0));
+      if (n) host.emit({ type: "notice", level: "info", source: "host", text: `Approved ${n} new or changed Codex hook${n === 1 ? "" : "s"}` });
+    }
     this.modelsLoaded = proc
       .request("model/list", { includeHidden: true }, 30_000)
       .then((r) => {
@@ -524,7 +531,7 @@ export class CodexAdapter implements ProviderAdapter {
       case "hook/completed": {
         const run = p.run ?? {};
         if (mine && (run.status === "failed" || run.status === "blocked")) {
-          const why = (Array.isArray(run.entries) ? run.entries : []).filter((e: Rec) => e?.kind === "error").map((e: Rec) => str(e.text)).filter(Boolean).join("; ");
+          const why = (Array.isArray(run.entries) ? run.entries : []).filter((e: Rec) => e?.kind !== "context").map((e: Rec) => str(e.text)).filter(Boolean).join("; ");
           const text = /approval required/i.test(why)
             ? `Hook ${run.eventName ?? ""} did not run: it is new or changed and waits for approval. Send /approve-hooks to approve.`.replace(/\s+/g, " ")
             : `Hook ${run.eventName ?? ""} ${run.status}${run.statusMessage ? `: ${run.statusMessage}` : ""}${why ? ` (${why})` : ""}`.replace(/\s+/g, " ");
