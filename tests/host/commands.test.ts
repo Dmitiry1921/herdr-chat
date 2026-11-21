@@ -68,7 +68,7 @@ test("menus: Pi keeps its built-ins; Claude Code and Codex get theirs, named for
     await c.waitFor(idle, 10_000);
     const names = builtins(c.state).map((b: any[]) => b[0]);
     assert.deepEqual(builtins(c.state), [
-      ["model", "client"], ["thinking", "client"], ["compact", "host"], ["new", "host"], ["clear", "host"], ["name", "host"],
+      ["model", "client"], ["thinking", "client"], ["compact", "host"], ["approve-hooks", "host"], ["new", "host"], ["clear", "host"], ["name", "host"],
       ["resume", "client"], ["reload", "host"], ["copy", "client"], ["transcript", "client"], ["tui", "client"],
       ["login", "client", [FAKE_CODEX, "login"]], ["fork", "client"],
       ...["init", "status", "review", "diff", "mcp", "hooks", "export", "statusline", "vim", "ide", "logout"].map((n) => [n, "client", { input: `/${n}` }]),

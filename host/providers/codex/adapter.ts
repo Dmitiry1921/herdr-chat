@@ -166,7 +166,7 @@ export class CodexAdapter implements ProviderAdapter {
   readonly tools = CODEX_TOOLS;
   readonly capabilities: Capabilities = {
     steer: true, followUp: true, thinkingLevels: [], permissions: true, permissionModes: CODEX_PERMISSION_MODES,
-    extensionUi: false, compact: true, compactInstructions: false, rename: true, fork: true, images: true, cost: false, tui: true,
+    extensionUi: false, compact: true, approveHooks: true, compactInstructions: false, rename: true, fork: true, images: true, cost: false, tui: true,
   };
   private opts: AdapterOptions;
   private proc: CodexProcess | null = null;
@@ -524,7 +524,10 @@ export class CodexAdapter implements ProviderAdapter {
       case "hook/completed": {
         const run = p.run ?? {};
         if (mine && (run.status === "failed" || run.status === "blocked")) {
-          const text = `Hook ${run.eventName ?? ""} ${run.status}${run.statusMessage ? `: ${run.statusMessage}` : ""}`.replace(/\s+/g, " ");
+          const why = (Array.isArray(run.entries) ? run.entries : []).filter((e: Rec) => e?.kind === "error").map((e: Rec) => str(e.text)).filter(Boolean).join("; ");
+          const text = /approval required/i.test(why)
+            ? `Hook ${run.eventName ?? ""} did not run: it is new or changed and waits for approval. Send /approve-hooks to approve.`.replace(/\s+/g, " ")
+            : `Hook ${run.eventName ?? ""} ${run.status}${run.statusMessage ? `: ${run.statusMessage}` : ""}${why ? ` (${why})` : ""}`.replace(/\s+/g, " ");
           if (this.activeTurn) this.hookFails.push(text);
           else this.emit({ type: "notice", level: "warning", source: "notify", text });
         }
@@ -1343,6 +1346,19 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   // ---------------------------------------------------------------- sessions
+
+  /** As Codex's own UI: hooks/list, then config/batchWrite of the current hash for each hook not trusted yet. */
+  async approveHooks(): Promise<number> {
+    const proc = this.require();
+    const r: Rec = await proc.request("hooks/list", { cwds: [this.opts.cwd] }, 30_000);
+    const waiting = (Array.isArray(r?.data) ? r.data : []).flatMap((d: Rec) => (Array.isArray(d?.hooks) ? d.hooks : []))
+      .filter((h: Rec) => h?.enabled !== false && h?.trustStatus && h.trustStatus !== "trusted" && str(h.currentHash) && str(h.key));
+    if (!waiting.length) return 0;
+    await proc.request("config/batchWrite", {
+      edits: waiting.map((h: Rec) => ({ keyPath: `hooks.state.${JSON.stringify(h.key)}.trusted_hash`, value: h.currentHash, mergeStrategy: "replace" })),
+    }, 30_000);
+    return waiting.length;
+  }
 
   async compact(): Promise<void> {
     const proc = this.require();

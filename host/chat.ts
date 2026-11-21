@@ -1185,6 +1185,11 @@ export class Chat {
     switch (name) {
       case "compact":
         return this.compact(rest || undefined);
+      case "approve-hooks": {
+        const n = (await this.requireAgent().approveHooks?.()) ?? 0;
+        this.notice("info", n ? `Approved ${n} hook${n === 1 ? "" : "s"}: they run from the next message.` : "No hooks wait for approval.");
+        return;
+      }
       case "new":
       case "clear":
         return this.newSession();

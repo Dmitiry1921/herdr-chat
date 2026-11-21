@@ -46,6 +46,7 @@ export function builtins(ctx: BuiltinContext): Command[] {
   out.push(B("model", "Choose the model", "client", "[provider/id]"));
   if (caps.thinkingLevels.length) out.push(B("thinking", "Choose the thinking level (effort)", "client", "[level]"));
   if (caps.compact) out.push(B("compact", "Compact the conversation", "host", caps.compactInstructions ? "[instructions]" : undefined));
+  if (caps.approveHooks) out.push(B("approve-hooks", `Approve ${n}'s new or changed hooks`, "host"));
   out.push(B("new", "Start a new session", "host"));
   out.push(B("clear", "Start a new session (alias of /new)", "host"));
   if (caps.rename) out.push(B("name", "Name this session", "host", "<name>"));
@@ -69,7 +70,7 @@ export function builtins(ctx: BuiltinContext): Command[] {
 }
 
 /** Every core built-in name, offered or not: an agent command with one of these names is never listed. */
-const ALL_BUILTIN_NAMES = new Set(["model", "thinking", "compact", "new", "clear", "name", "resume", "reload", "copy", "transcript", "tui", "login", "settings", "scoped-models", "fork"]);
+const ALL_BUILTIN_NAMES = new Set(["model", "thinking", "compact", "approve-hooks", "new", "clear", "name", "resume", "reload", "copy", "transcript", "tui", "login", "settings", "scoped-models", "fork"]);
 
 export function mergeCommands(builtin: Command[], agentCommands: unknown): Command[] {
   const out = [...builtin];

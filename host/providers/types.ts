@@ -42,6 +42,8 @@ export type Capabilities = {
   /** Statuses and widgets can arrive. */
   extensionUi: boolean;
   compact: boolean;
+  /** /approve-hooks: the adapter has `approveHooks` (Codex asks to approve a hook that is new or changed). */
+  approveHooks?: boolean;
   /** /compact takes instructions (what the summary keeps). */
   compactInstructions: boolean;
   rename: boolean;
@@ -362,6 +364,8 @@ export interface ProviderAdapter {
   setPermissionMode(mode: string): Promise<void>;
   /** Resolves when compaction is done; rejects when it fails. */
   compact(instructions?: string): Promise<void>;
+  /** Trusts the agent's hooks that wait for approval; resolves with how many. */
+  approveHooks?(): Promise<number>;
   newSession(): Promise<void>;
   switchSession(path: string): Promise<void>;
   setName(name: string): Promise<void>;
