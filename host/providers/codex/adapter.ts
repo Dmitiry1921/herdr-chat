@@ -834,6 +834,22 @@ export class CodexAdapter implements ProviderAdapter {
     if (p.mode === "url" && str(p.url)) {
       return { id: askId, kind: "confirm", title: `${server}: ${p.message ?? "open this link"}`, message: `Open ${p.url} and finish there, then confirm.` };
     }
+    // Codex asks before an MCP tool call with an empty form and `_meta.codex_approval_kind: "mcp_tool_call"`; the
+    // answer's `_meta.persist` ("session" | "always") remembers it, "always" in config.toml (approval_mode = "approve").
+    const meta: Rec = p._meta && typeof p._meta === "object" ? p._meta : {};
+    if (meta.codex_approval_kind === "mcp_tool_call") {
+      const persist: string[] = Array.isArray(meta.persist) ? meta.persist.map(String) : typeof meta.persist === "string" ? [meta.persist] : [];
+      const shown = str(meta.tool_params_display) ?? (meta.tool_params ? JSON.stringify(meta.tool_params).slice(0, 400) : undefined);
+      return {
+        id: askId, kind: "permission", title: `${server}: ${p.message ?? "run a tool?"}`, ...(shown ? { message: shown } : {}),
+        choices: [
+          { id: "once", label: "Allow once", kind: "allow" },
+          ...(persist.includes("session") ? [{ id: "session", label: "Allow for this session", kind: "allow_always" as const }] : []),
+          ...(persist.includes("always") ? [{ id: "always", label: "Always allow this tool", kind: "allow_always" as const }] : []),
+          { id: "deny", label: "Deny", kind: "deny" },
+        ],
+      };
+    }
     const schema: Rec = p.requestedSchema ?? {};
     const props: Rec = schema.properties && typeof schema.properties === "object" ? schema.properties : null;
     if ((p.mode === "form" || p.mode === "openai/form" || p.mode === "openaiForm") && props) {
@@ -893,6 +909,11 @@ export class CodexAdapter implements ProviderAdapter {
         }
         if ("confirmed" in a) {
           proc.respond(open.rpcId, { action: a.confirmed ? "accept" : "decline", content: null, _meta: null });
+          return;
+        }
+        if ("choice" in a) {
+          if (a.choice === "deny") proc.respond(open.rpcId, { action: "decline", content: null, _meta: null });
+          else proc.respond(open.rpcId, { action: "accept", content: {}, _meta: a.choice === "session" || a.choice === "always" ? { persist: a.choice } : null });
           return;
         }
         const content: Rec = {};
