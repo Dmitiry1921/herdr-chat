@@ -190,6 +190,8 @@ export class CodexAdapter implements ProviderAdapter {
   // ---- run state
   private runOpen = false;
   private activeTurn: string | null = null;
+  /** Hook failures of the running turn: shown when it completes; a stopped turn cancels its hooks, which is no failure. */
+  private hookFails: string[] = [];
   private turnStarting: Promise<unknown> | null = null;
   private aborting = false;
   private interruptPending = false;
@@ -522,7 +524,9 @@ export class CodexAdapter implements ProviderAdapter {
       case "hook/completed": {
         const run = p.run ?? {};
         if (mine && (run.status === "failed" || run.status === "blocked")) {
-          this.emit({ type: "notice", level: "warning", source: "notify", text: `Hook ${run.eventName ?? ""} ${run.status}${run.statusMessage ? `: ${run.statusMessage}` : ""}`.replace(/\s+/g, " ") });
+          const text = `Hook ${run.eventName ?? ""} ${run.status}${run.statusMessage ? `: ${run.statusMessage}` : ""}`.replace(/\s+/g, " ");
+          if (this.activeTurn) this.hookFails.push(text);
+          else this.emit({ type: "notice", level: "warning", source: "notify", text });
         }
         return;
       }
@@ -649,6 +653,9 @@ export class CodexAdapter implements ProviderAdapter {
       this.emitQueue();
     }
     const aborted = status === "interrupted" || this.aborting;
+    const fails = this.hookFails;
+    this.hookFails = [];
+    if (!aborted) for (const text of fails) this.emit({ type: "notice", level: "warning", source: "notify", text });
     if (aborted) {
       this.proc?.request("thread/backgroundTerminals/clean", { threadId: this.thread }, 10_000).catch(() => {});
     }
@@ -658,6 +665,7 @@ export class CodexAdapter implements ProviderAdapter {
 
   private settle(aborted: boolean): void {
     this.aborting = false;
+    this.hookFails = [];
     this.interruptPending = false;
     this.activeTurn = null;
     this.idleSeenAt = 0;
